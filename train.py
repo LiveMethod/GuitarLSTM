@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 import math
 import h5py
 import argparse
-
+import datetime
    
 def pre_emphasis_filter(x, coeff=0.95):
     return tf.concat([x, x - coeff * x], 1)
@@ -61,10 +61,11 @@ def main(args):
 
     name = args.name
     if not os.path.exists('models/'+name):
-        os.makedirs('models/'+name)
+      os.makedirs('models/'+name)
     else:
-        print("A model folder with the same name already exists. Please choose a new name.")
-        return
+      print("A model folder with the same name already exists. Adding timestamp for uniqueness.")
+      timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+      os.makedirs(f'models/{name}_{timestamp}')
 
     train_mode = args.training_mode     # 0 = speed training, 
                                         # 1 = accuracy training 
