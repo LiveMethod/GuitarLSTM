@@ -184,8 +184,16 @@ def main(args):
     if args.create_plots == 1:
         print("Plotting results..")
         import plot
+        import analyze
 
-        plot.analyze_pred_vs_actual({   'output_wav':'models/'+name+'/y_test.wav',
+        # plot.analyze_pred_vs_actual({   'output_wav':'models/'+name+'/y_test.wav',
+        #                                     'pred_wav':'models/'+name+'/y_pred.wav', 
+        #                                     'input_wav':'models/'+name+'/x_test.wav',
+        #                                     'model_name':name,
+        #                                     'show_plots':1,
+        #                                     'path':'models/'+name
+        #                                 })
+        analyze.analyze_pred_vs_actual({   'output_wav':'models/'+name+'/y_test.wav',
                                             'pred_wav':'models/'+name+'/y_pred.wav', 
                                             'input_wav':'models/'+name+'/x_test.wav',
                                             'model_name':name,
