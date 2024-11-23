@@ -26,7 +26,7 @@ def error_to_signal(y_true, y_pred):
     Error to signal ratio with pre-emphasis filter:
     """
     y_true, y_pred = pre_emphasis_filter(y_true), pre_emphasis_filter(y_pred)
-    return K.sum(tf.pow(y_true - y_pred, 2), axis=0) / K.sum(tf.pow(y_true, 2), axis=0) + 1e-10
+    return K.sum(tf.pow(y_true - y_pred, 2), axis=0) / (K.sum(tf.pow(y_true, 2), axis=0) + 1e-10)
     
 def save_wav(name, data):
     wavfile.write(name, 44100, data.flatten().astype(np.float32))
