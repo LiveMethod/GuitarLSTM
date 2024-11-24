@@ -4,6 +4,9 @@ from scipy import signal
 from scipy.io import wavfile
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+from matplotlib.colors import LinearSegmentedColormap
+from matplotlib import cm
+
 
 class Compare:
     """
@@ -88,6 +91,12 @@ class Compare:
         divider = make_axes_locatable(ax1)
         ax1_bottom = divider.append_axes("bottom", size="55%", pad=0.25)
 
+        # Custom divergent colormap from red to white to green
+        rwg = [(0.7, 0, 0), (1, 1, 1), (0, 0.6, 0)]
+        nodes = [0.0, 0.5, 1.0]
+        diff_cmap = LinearSegmentedColormap.from_list('rwg', list(zip(nodes, rwg)))
+        plt.colormaps.register(cmap=diff_cmap, name='rwg')
+
         # ==============================================================================
         # Top left (AX1): EQ Curve
         # ==============================================================================
@@ -98,7 +107,7 @@ class Compare:
         ax1.set_title('Frequency Response (Log and linear)')
         ax1.plot(0.5 * sr * w_dry / np.pi, np.abs(h_dry), label='Dry', color='darkgray', linewidth=0.5, alpha=0.7)
         ax1.plot(0.5 * sr * w_train / np.pi, np.abs(h_train), label='Train', color='red', linewidth=0.5, alpha=0.6)
-        ax1.plot(0.5 * sr * w_pred / np.pi, np.abs(h_pred), label='Pred', color='blue', linewidth=0.5)
+        ax1.plot(0.5 * sr * w_pred / np.pi, np.abs(h_pred), label='Pred', color='green', linewidth=0.5)
         ax1.set_ylim([min(np.abs(h_train))*0.5, max(np.abs(h_train))*1.5])
         ax1.set_xscale('log')
         ax1.set_yscale('log')
@@ -113,16 +122,13 @@ class Compare:
 
         ax1_bottom.plot(0.5 * sr * w_dry / np.pi, np.abs(h_dry), label='Dry', color='darkgray', linewidth=0.5, alpha=0.7)
         ax1_bottom.plot(0.5 * sr * w_train / np.pi, np.abs(h_train), label='Train', color='red', linewidth=0.5, alpha=0.6)
-        ax1_bottom.plot(0.5 * sr * w_pred / np.pi, np.abs(h_pred), label='Pred', color='blue', linewidth=0.5)
+        ax1_bottom.plot(0.5 * sr * w_pred / np.pi, np.abs(h_pred), label='Pred', color='green', linewidth=0.5)
         ax1_bottom.set_ylim([min(np.abs(h_train))*0.5, max(np.abs(h_train))*1.5])
         ax1_bottom.set_xscale('linear')
         ax1_bottom.set_yscale('log')
         ax1_bottom.set_xlim([20, 20000])
         ax1_bottom.set_xticks([1, 1000, 5000, 10000, 15000, 20000])
         ax1_bottom.set_xticklabels(['0','1k', '5k', '10k', '15k', '20k'])
-
-
-        
 
         # ==============================================================================
         # Bottom left (AX2): Power Spectral Density
@@ -138,7 +144,7 @@ class Compare:
         ax2.set_title('Power Spectral Density')
         ax2.plot(f_dry, Pxx_dry, label='Dry', color='darkgray', linewidth=0.5, alpha=0.7)
         ax2.plot(f_train, Pxx_train, label='Train', color='red', linewidth=0.5, alpha=0.6)
-        ax2.plot(f_pred, Pxx_pred, label='Pred', color='blue', linewidth=0.5)
+        ax2.plot(f_pred, Pxx_pred, label='Pred', color='green', linewidth=0.5)
         # Fix y axis based on train means identical graph scale across trainings
         ax2.set_ylim([min(Pxx_train)*0.5, max(Pxx_train)*1.5])
         ax2.set_xscale('log')
@@ -162,7 +168,7 @@ class Compare:
         sgram_diff_db = sgram_pred_db - sgram_train_db
 
         # Plot the difference
-        ax3.pcolormesh(t, f, sgram_diff_db, shading='auto', cmap='bwr_r', vmin=-10, vmax=10)
+        ax3.pcolormesh(t, f, sgram_diff_db, shading='auto', cmap='rwg', vmin=-10, vmax=10)
         ax3.set_ylabel('Frequency [Hz]')
         ax3.set_xlabel('Time [sec]')
         ax3.set_yscale('log')
@@ -181,17 +187,12 @@ class Compare:
         overlap_waveform = np.minimum(pred, train)
 
         ax4.set_title('Waveform Comparison')
-        ax4.plot(x_range, pred, label='Pred +', color='blue', alpha=0.5)
+        ax4.plot(x_range, pred, label='Pred +', color='green', alpha=0.5)
         ax4.plot(x_range, train, label='Train +', color='red', alpha=0.5)
         ax4.plot(x_range, overlap_waveform, label='both', color='white', alpha=1)
         ax4.plot(x_range, dry, label='Dry', color='lightgray', alpha=1)
         ax4.legend()
 
-        # ax4_bottom.plot(x_range, dry, label='Dry', color='darkgray', linewidth=0.5, alpha=0.7)
-        # ax4_bottom.legend()
-        # ax4_bottom.set_xticks([])
-        # ax4_bottom.set_yticks([])
-        
         # Save the figure
         if(self.save):
             save_path = f'{self.out_dir}/result.png'
