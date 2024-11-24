@@ -1,216 +1,228 @@
+import os
+import datetime
+import time
+import sys
+from typing import Literal
+import numpy as np
+from scipy.io import wavfile
 import tensorflow as tf
 from tensorflow.keras import Sequential
-from tensorflow.keras.layers import LSTM, Conv1D, Dense
+from tensorflow.keras.layers import LSTM, Conv1D, Dense, Input
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.backend import clear_session
 from tensorflow.keras.activations import tanh, elu, relu
 from tensorflow.keras.models import load_model
 import tensorflow.keras.backend as K
 from tensorflow.keras.utils import Sequence
-
-import os
-from scipy import signal
-from scipy.io import wavfile
-import numpy as np
-import matplotlib.pyplot as plt
-import math
 import h5py
-import argparse
-import datetime
-   
-def pre_emphasis_filter(x, coeff=0.95):
-    return tf.concat([x, x - coeff * x], 1)
-    
-def error_to_signal(y_true, y_pred): 
+
+from compare import Compare
+from utils import Data, IO
+
+def main(
+    source_dir:str,
+    training_mode:Literal['fast', 'accurate', 'extended'] = 'fast',
+    split_data:int = 1,
+    batch_size:int = 4096,
+    input_size:int = 100,
+    max_epochs:int = 1,
+    test_pct:int = 20
+):
     """
-    Error to signal ratio with pre-emphasis filter:
-    """
-    y_true, y_pred = pre_emphasis_filter(y_true), pre_emphasis_filter(y_pred)
-    return K.sum(tf.pow(y_true - y_pred, 2), axis=0) / (K.sum(tf.pow(y_true, 2), axis=0) + 1e-10)
+    A Tensorflow/Keras implementation of the LSTM model found in:
+    "Real-Time Guitar Amplifier Emulation with Deep Learning"
+    https://www.mdpi.com/2076-3417/10/3/766/htm
+
+    Uses a stack of two 1D Convolutional layers, followed by LSTM,
+    followed by a Dense (fully connected) layer. Three preset training
+    modes are available, with further customization by editing the code.
+    A Sequential tf.keras model is implemented here.
+
+    Note: RAM may be a limiting factor for the parameter "input_size".
+    The wav data is preprocessed and stored in RAM, which improves training
+    speed but quickly runs out if using a large number for "input_size".
+    Reduce this if you are experiencing RAM issues. Use the "--split_data"
+    option to divide the data by the specified amount and train the model
+    on each set. Doing this will allow for a higher input_size setting
+    (and therefore more accurate results).
     
-def save_wav(name, data):
-    wavfile.write(name, 44100, data.flatten().astype(np.float32))
+    Modes:
+        Speed training (default)
+        Accuracy training
+        Extended training (set max_epochs as desired, for example 50+)
+    """
+    print(f"Training started")
 
-def normalize(data):
-    data_max = max(data)
-    data_min = min(data)
-    data_norm = max(data_max,abs(data_min))
-    return data / data_norm
+    timestamp = datetime.datetime.now().strftime("%Y-%b-%d-%H%M%S").lower()
+    name, in_files, out_files = IO.validate_source(source_dir)
+    out_dir = f'{name}_{timestamp}'
+    os.makedirs(f'models/{out_dir}')
+    test_size = test_pct/100
 
-def main(args):
-    '''Ths is a similar Tensorflow/Keras implementation of the LSTM model from the paper:
-        "Real-Time Guitar Amplifier Emulation with Deep Learning"
-        https://www.mdpi.com/2076-3417/10/3/766/htm
-
-        Uses a stack of two 1-D Convolutional layers, followed by LSTM, followed by 
-        a Dense (fully connected) layer. Three preset training modes are available, 
-        with further customization by editing the code. A Sequential tf.keras model 
-        is implemented here.
-
-        Note: RAM may be a limiting factor for the parameter "input_size". The wav data
-          is preprocessed and stored in RAM, which improves training speed but quickly runs out
-          if using a large number for "input_size".  Reduce this if you are experiencing
-          RAM issues. Also, you can use the "--split_data" option to divide the data by the
-          specified amount and train the model on each set. Doing this will allow for a higher
-          input_size setting (more accurate results).
-        
-        --training_mode=0   Speed training (default)
-        --training_mode=1   Accuracy training
-        --training_mode=2   Extended training (set max_epochs as desired, for example 50+)
-    '''
-
-    name = args.name
-    if not os.path.exists('models/'+name):
-      os.makedirs('models/'+name)
-    else:
-      print("A model folder with the same name already exists. Adding timestamp for uniqueness.")
-      timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-      os.makedirs(f'models/{name}_{timestamp}')
-
-    train_mode = args.training_mode     # 0 = speed training, 
-                                        # 1 = accuracy training 
-                                        # 2 = extended training
-    batch_size = args.batch_size 
-    test_size = 0.2
-    epochs = args.max_epochs
-    input_size = args.input_size
-
-    # TRAINING MODE
-    if train_mode == 0:         # Speed Training
-        learning_rate = 0.01 
-        conv1d_strides = 12    
-        conv1d_filters = 16
-        hidden_units = 36
-    elif train_mode == 1:       # Accuracy Training (~10x longer than Speed Training)
-        learning_rate = 0.01 
-        conv1d_strides = 4
-        conv1d_filters = 36
-        hidden_units= 64
-    else:                       # Extended Training (~60x longer than Accuracy Training)
-        learning_rate = 0.0005 
+    if training_mode == 'extended':
+         # Extended Training (~60x longer than Accuracy Training)
+        learning_rate = 0.0005
         conv1d_strides = 3
         conv1d_filters = 36
         hidden_units= 96
+    elif training_mode == 'accurate':
+        # ~10x longer than Speed Training
+        learning_rate = 0.01
+        conv1d_strides = 4
+        conv1d_filters = 36
+        hidden_units= 64
+    else:
+        learning_rate = 0.01
+        conv1d_strides = 12
+        conv1d_filters = 16
+        hidden_units = 36
+    print(f'Params set for training mode "{training_mode}"')
 
-    # Create Sequential Model ###########################################
+    # =========================================================================
+    # Create Sequential Model
+    # -------------------------------------------------------------------------
+    # A Sqeuential model is a linear stack of layers. "Same" padding is used to
+    # ensure the output is the same size as the input. The input shape is the
+    # number of samples (input_size) and the number of features (1). The model
+    # is compiled with the Adam optimizer and the custom loss function "esr".
+    #
+    # The history object is used to store the results of model.fit and append
+    # metadata about the training process to the saved model file.
+    # =========================================================================
     clear_session()
+    history = None
     model = Sequential()
-    model.add(Conv1D(conv1d_filters, 12,strides=conv1d_strides, activation=None, padding='same',input_shape=(input_size,1)))
-    model.add(Conv1D(conv1d_filters, 12,strides=conv1d_strides, activation=None, padding='same'))
+    model.add(Input(shape=(input_size, 1)))
+    model.add(Conv1D(conv1d_filters, 12, strides=conv1d_strides, activation=None, padding='same'))
+    model.add(Conv1D(conv1d_filters, 12, strides=conv1d_strides, activation=None, padding='same'))
     model.add(LSTM(hidden_units))
     model.add(Dense(1, activation=None))
-    model.compile(optimizer=Adam(learning_rate=learning_rate), loss=error_to_signal, metrics=[error_to_signal])
-    print(model.summary())
+    model.compile(optimizer=Adam(learning_rate=learning_rate), loss=Data.esr, metrics=[Data.esr])
+    print('\n') ;model.summary(); print('\n')
 
-    # Load and Preprocess Data ###########################################
-    in_rate, in_data = wavfile.read(args.in_file)
-    out_rate, out_data = wavfile.read(args.out_file)
+    # =========================================================================
+    # Load and Preprocess Data
+    # -------------------------------------------------------------------------
+    # The input and output wav files are read and stored in numpy arrays. The
+    # data is normalized to the maximum value of the input data. The input data
+    # is then split into chunks of size "input_size" and the output data is
+    # shifted by "input_size-1" to align with the input data. The data is then
+    # shuffled and split into training and validation sets for training.
+    #
+    # NOTE: This currently uses only the first file in each data dir.
+    # Future versions likely to require multiple files for training.
+    # =========================================================================
 
-    X_all = in_data.astype(np.float32).flatten()  
-    X_all = normalize(X_all).reshape(len(X_all),1)   
-    y_all = out_data.astype(np.float32).flatten() 
-    y_all = normalize(y_all).reshape(len(y_all),1)   
+    in_sr, in_data = wavfile.read(in_files[0])
+    out_sr, out_data = wavfile.read(out_files[0])
+
+    # Validate that sample rates match
+    if(in_sr != out_sr):
+        # It's pretty trivial to do this conversion, but given that it's
+        # a strange situation to be in, preference on raising, as it
+        # probably indicates that something weird is going on.
+        raise ValueError("Input and output files have different sample rates.")
+    else:
+        sr = in_sr
+
+    x_all = in_data.astype(np.float32).flatten()
+    x_all = Data.normalize(x_all).reshape(len(x_all),1)
+    y_all = out_data.astype(np.float32).flatten()
+    y_all = Data.normalize(y_all).reshape(len(y_all),1)
 
     # If splitting the data for training, do this part
-    if args.split_data > 1:
-        num_split = len(X_all) // args.split_data
-        X = X_all[0:num_split*args.split_data]
-        y = y_all[0:num_split*args.split_data]
-        X_data = np.split(X, args.split_data)
-        y_data = np.split(y, args.split_data)
+    if split_data > 1:
+        num_split = len(x_all) // split_data
+        x = x_all[0:num_split*split_data]
+        y = y_all[0:num_split*split_data]
+        x_data = np.split(x, split_data)
+        y_data = np.split(y, split_data)
 
         # Perform training on each split dataset
-        for i in range(len(X_data)):
-            print("\nTraining on split data " + str(i+1) + "/" +str(len(X_data)))
-            X_split = X_data[i]
+        for i in range(len(x_data)):
+            print(f'Training on split data {(i+1)} of {len(x_data)}...')
+            x_split = x_data[i]
             y_split = y_data[i]
 
-            y_ordered = y_split[input_size-1:] 
+            y_ordered = y_split[input_size-1:]
 
-            indices = np.arange(input_size) + np.arange(len(X_split)-input_size+1)[:,np.newaxis] 
-            X_ordered = tf.gather(X_split,indices) 
+            indices = np.arange(input_size) + np.arange(len(x_split)-input_size+1)[:,np.newaxis]
+            x_ordered = tf.gather(x_split,indices)
 
-            shuffled_indices = np.random.permutation(len(X_ordered)) 
-            X_random = tf.gather(X_ordered,shuffled_indices)
+            shuffled_indices = np.random.permutation(len(x_ordered))
+            x_random = tf.gather(x_ordered,shuffled_indices)
             y_random = tf.gather(y_ordered, shuffled_indices)
 
             # Train Model ###################################################
-            model.fit(X_random,y_random, epochs=epochs, batch_size=batch_size, validation_split=0.2)  
- 
-
-        model.save('models/'+name+'/'+name+'.h5')
-
+            split_history = model.fit(x_random,y_random, epochs=max_epochs, batch_size=batch_size, validation_split=test_size)
+            if history is not None:
+                for key in history.history.keys():
+                    history.history[key].extend(split_history.history[key])
+            else:
+                history = split_history
     # If training on the full set of input data in one run, do this part
     else:
-        y_ordered = y_all[input_size-1:] 
+        print(f'Training on unsplit dataset...')
+        y_ordered = y_all[input_size-1:]
 
-        indices = np.arange(input_size) + np.arange(len(X_all)-input_size+1)[:,np.newaxis] 
-        X_ordered = tf.gather(X_all,indices) 
+        indices = np.arange(input_size) + np.arange(len(x_all)-input_size+1)[:,np.newaxis]
+        x_ordered = tf.gather(x_all,indices)
 
-        shuffled_indices = np.random.permutation(len(X_ordered)) 
-        X_random = tf.gather(X_ordered,shuffled_indices)
+        shuffled_indices = np.random.permutation(len(x_ordered))
+        x_random = tf.gather(x_ordered,shuffled_indices)
         y_random = tf.gather(y_ordered, shuffled_indices)
 
         # Train Model ###################################################
-        model.fit(X_random,y_random, epochs=epochs, batch_size=batch_size, validation_split=test_size)    
-
-        model.save('models/'+name+'/'+name+'.h5')
+        history = model.fit(x_random,y_random, epochs=max_epochs, batch_size=batch_size, validation_split=test_size)
 
     # Run Prediction #################################################
-    print("Running prediction..")
+    print("Running prediction...")
 
     # Get the last 20% of the wav data to run prediction and plot results
-    y_the_rest, y_last_part = np.split(y_all, [int(len(y_all)*.8)])
-    x_the_rest, x_last_part = np.split(X_all, [int(len(X_all)*.8)])
-    y_test = y_last_part[input_size-1:] 
-    indices = np.arange(input_size) + np.arange(len(x_last_part)-input_size+1)[:,np.newaxis] 
-    X_test = tf.gather(x_last_part,indices) 
+    x_test_data = x_all[-int(len(x_all) * test_size):]
+    y_test_data = y_all[-int(len(y_all) * test_size):]
 
-    prediction = model.predict(X_test, batch_size=batch_size)
+    y_test = y_test_data[input_size-1:]
+    indices = np.arange(input_size) + np.arange(len(x_test_data)-input_size+1)[:,np.newaxis]
+    x_test = tf.gather(x_test_data,indices)
 
-    save_wav('models/'+name+'/y_pred.wav', prediction)
-    save_wav('models/'+name+'/x_test.wav', x_last_part)
-    save_wav('models/'+name+'/y_test.wav', y_test)
+    prediction = model.predict(x_test, batch_size=batch_size)
 
-    # Add additional data to the saved model (like input_size)
-    filename = 'models/'+name+'/'+name+'.h5'
-    f = h5py.File(filename, 'a')
-    grp = f.create_group("info")
-    dset = grp.create_dataset("input_size", (1,), dtype='int16')
-    dset[0] = input_size
-    f.close()
+    wavfile.write(f'models/{out_dir}/y_pred.wav', sr, prediction.flatten().astype(np.float32))
+    wavfile.write(f'models/{out_dir}/x_test.wav', sr, x_test_data.flatten().astype(np.float32))
+    wavfile.write(f'models/{out_dir}/y_test.wav', sr, y_test.flatten().astype(np.float32))
+    print("Prediction complete \n")
 
-    # Create Analysis Plots ###########################################
-    if args.create_plots == 1:
-        print("Plotting results..")
-        import plot
-        import analyze
+    # =========================================================================
+    # Save file
+    # -------------------------------------------------------------------------
+    # The  model needs to be saved before the additional h5py metadata can
+    # be added.
+    #
+    # Keras complains about saving legacy H5 files, but the h5py metadata
+    # append is not forward compatible. This suppresses the warning.
+    # Amenable to reviewing h5 metadata usage and dropping if unused or
+    # switching to a lib that does equivalent things for keras files.
+    # =========================================================================
 
-        # plot.analyze_pred_vs_actual({   'output_wav':'models/'+name+'/y_test.wav',
-        #                                     'pred_wav':'models/'+name+'/y_pred.wav', 
-        #                                     'input_wav':'models/'+name+'/x_test.wav',
-        #                                     'model_name':name,
-        #                                     'show_plots':1,
-        #                                     'path':'models/'+name
-        #                                 })
-        analyze.analyze_pred_vs_actual({   'output_wav':'models/'+name+'/y_test.wav',
-                                            'pred_wav':'models/'+name+'/y_pred.wav', 
-                                            'input_wav':'models/'+name+'/x_test.wav',
-                                            'model_name':name,
-                                            'show_plots':1,
-                                            'path':'models/'+name
-                                        })
+    model_save_path = f'models/{out_dir}/{name}.h5'
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("in_file")
-    parser.add_argument("out_file")
-    parser.add_argument("name")
-    parser.add_argument("--training_mode", type=int, default=0)
-    parser.add_argument("--batch_size", type=int, default=4096)
-    parser.add_argument("--max_epochs", type=int, default=1)
-    parser.add_argument("--create_plots", type=int, default=1)
-    parser.add_argument("--input_size", type=int, default=100)
-    parser.add_argument("--split_data", type=int, default=1)
-    args = parser.parse_args()
-    main(args)
+    sys.stderr = open(os.devnull, "w")  # silence stderr
+    model.save(model_save_path)
+    sys.stderr = sys.__stderr__  # unsilence stderr
+
+    with h5py.File(model_save_path, 'a') as f:
+        grp = f.create_group("info")
+
+        grp.attrs['input_size'] = input_size
+        grp.attrs['epochs'] = max_epochs
+        grp.attrs['batch_size'] = batch_size
+        grp.attrs['learning_rate'] = learning_rate
+        grp.attrs['model_architecture'] = str(model.to_json())
+        grp.attrs['data_preprocessing'] = 'normalized'
+        grp.attrs['training_time'] = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+        grp.attrs['final_training_loss'] = history.history['loss'][-1]
+        grp.attrs['final_validation_loss'] = history.history['val_loss'][-1]
+
+    print(f"Training complete. Model saved to: {model_save_path}")
+    Compare(out_dir)
