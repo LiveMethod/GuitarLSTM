@@ -44,4 +44,3 @@ class IO:
         
         name = source_dir.split(os.sep)[-1]
         return name, in_files, out_files
-    

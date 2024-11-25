@@ -15,18 +15,20 @@ from tensorflow.keras.models import load_model
 import tensorflow.keras.backend as K
 from tensorflow.keras.utils import Sequence
 import h5py
+import json
 
 from compare import Compare
 from utils import Data, IO
 
 def main(
     source_dir:str,
-    training_mode:Literal['fast', 'accurate', 'extended'] = 'fast',
+    custom_loss_fn,
+    training_mode:Literal['fast', 'accurate', 'experimental', 'extended', 'high_freq_focus'] = 'fast',
     split_data:int = 1,
     batch_size:int = 4096,
     input_size:int = 100,
     max_epochs:int = 1,
-    test_pct:int = 20
+    test_pct:int = 20,
 ):
     """
     A Tensorflow/Keras implementation of the LSTM model found in:
@@ -53,10 +55,12 @@ def main(
     """
     print(f"Training started")
 
-    timestamp = datetime.datetime.now().strftime("%Y-%b-%d-%H%M%S").lower()
+    timestamp = datetime.datetime.now().strftime("%H%M%S").lower()
     name, in_files, out_files = IO.validate_source(source_dir)
-    out_dir = f'{name}_{timestamp}'
+    # out_dir = f'{name}_{timestamp}'
+    out_dir = f'{custom_loss_fn.__name__}_{timestamp}'
     os.makedirs(f'models/{out_dir}')
+    print(f"Current output directory: {out_dir}")
     test_size = test_pct/100
 
     if training_mode == 'extended':
@@ -65,18 +69,59 @@ def main(
         conv1d_strides = 3
         conv1d_filters = 36
         hidden_units= 96
+        kernel_size = 12
+    elif training_mode == 'experimental':
+        # let's get weird
+        learning_rate = 0.00666
+        conv1d_strides = 3
+        conv1d_filters = 33
+        hidden_units= 69
+        kernel_size = 9
+    elif training_mode == 'high_freq_focus':
+        # let's get weird
+        # learning_rate = 0.005
+        # conv1d_strides = 2
+        # conv1d_filters = 128
+        # hidden_units= 256
+        # kernel_size = 36
+        learning_rate = 0.0069
+        conv1d_strides = 2
+        conv1d_filters = 128
+        hidden_units= 69
+        kernel_size = 36
     elif training_mode == 'accurate':
         # ~10x longer than Speed Training
         learning_rate = 0.01
         conv1d_strides = 4
         conv1d_filters = 36
         hidden_units= 64
+        kernel_size = 12
     else:
         learning_rate = 0.01
         conv1d_strides = 12
         conv1d_filters = 16
         hidden_units = 36
-    print(f'Params set for training mode "{training_mode}"')
+        kernel_size = 12
+    
+    config_summary = {
+      "source_dir": source_dir,
+      "training_mode": training_mode,
+      "split_data": split_data,
+      "batch_size": batch_size,
+      "input_size": input_size,
+      "max_epochs": max_epochs,
+      "test_pct": test_pct,
+      "learning_rate": learning_rate,
+      "conv1d_strides": conv1d_strides,
+      "conv1d_filters": conv1d_filters,
+      "hidden_units": hidden_units,
+      "kernel_size": kernel_size,
+      "loss_fn": custom_loss_fn.__name__
+    }
+
+    with open(f'models/{out_dir}/summary.json', 'w') as f:
+      json.dump(config_summary, f, indent=2)
+    print(f'Params saved for training mode "{training_mode}"')
 
     # =========================================================================
     # Create Sequential Model
@@ -93,11 +138,11 @@ def main(
     history = None
     model = Sequential()
     model.add(Input(shape=(input_size, 1)))
-    model.add(Conv1D(conv1d_filters, 12, strides=conv1d_strides, activation=None, padding='same'))
-    model.add(Conv1D(conv1d_filters, 12, strides=conv1d_strides, activation=None, padding='same'))
+    model.add(Conv1D(conv1d_filters, kernel_size, strides=conv1d_strides, activation=None, padding='same'))
+    model.add(Conv1D(conv1d_filters, kernel_size, strides=conv1d_strides, activation=None, padding='same'))
     model.add(LSTM(hidden_units))
     model.add(Dense(1, activation=None))
-    model.compile(optimizer=Adam(learning_rate=learning_rate), loss=Data.esr, metrics=[Data.esr])
+    model.compile(optimizer=Adam(learning_rate=learning_rate), loss=custom_loss_fn, metrics=[custom_loss_fn])
     print('\n') ;model.summary(); print('\n')
 
     # =========================================================================
@@ -189,6 +234,7 @@ def main(
     prediction = model.predict(x_test, batch_size=batch_size)
 
     wavfile.write(f'models/{out_dir}/y_pred.wav', sr, prediction.flatten().astype(np.float32))
+    wavfile.write(f'models/{out_dir}/y_pred_{custom_loss_fn.__name__}.wav', sr, prediction.flatten().astype(np.float32))
     wavfile.write(f'models/{out_dir}/x_test.wav', sr, x_test_data.flatten().astype(np.float32))
     wavfile.write(f'models/{out_dir}/y_test.wav', sr, y_test.flatten().astype(np.float32))
     print("Prediction complete \n")
@@ -223,6 +269,21 @@ def main(
         grp.attrs['training_time'] = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
         grp.attrs['final_training_loss'] = history.history['loss'][-1]
         grp.attrs['final_validation_loss'] = history.history['val_loss'][-1]
+
+
+    model_architecture = json.loads(model.to_json())
+    final_summary = {
+      **config_summary,
+      "data_preprocessing": "normalized",
+      "training_time": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
+      "history": history.history,
+      "model_architecture": model_architecture
+    }
+
+    # Ovbrwrite the config file with additional information
+    with open(f'models/{out_dir}/summary.json', 'w') as f:
+      json.dump(final_summary, f, indent=2)
+    print(f'Params saved for training mode "{training_mode}"')
 
     print(f"Training complete. Model saved to: {model_save_path}")
     Compare(out_dir)
