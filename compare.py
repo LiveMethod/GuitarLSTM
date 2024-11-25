@@ -73,7 +73,6 @@ class Compare:
         self.train = train[:shortest_data]
         self.pred = pred[:shortest_data]
         
-
     def analyze(self):
         dry, train, pred, sr = self.dry, self.train, self.pred, self.sr
         
@@ -94,8 +93,9 @@ class Compare:
         # Custom divergent colormap from red to white to green
         rwg = [(0.7, 0, 0), (1, 1, 1), (0, 0.6, 0)]
         nodes = [0.0, 0.5, 1.0]
-        diff_cmap = LinearSegmentedColormap.from_list('rwg', list(zip(nodes, rwg)))
-        plt.colormaps.register(cmap=diff_cmap, name='rwg')
+        if 'rwg' not in plt.colormaps():
+            diff_cmap = LinearSegmentedColormap.from_list('rwg', list(zip(nodes, rwg)))
+            plt.colormaps.register(cmap=diff_cmap, name='rwg')
 
         # ==============================================================================
         # Top left (AX1): EQ Curve
@@ -104,10 +104,49 @@ class Compare:
         w_train, h_train = signal.freqz(train)
         w_pred, h_pred = signal.freqz(pred)
 
+        # Calculate the difference in amplitude between y_pred and y_train in 500Hz buckets from 5kHz to 20kHz
+        bucket_size = 500
+        start_freq = 5000
+        end_freq = 20000
+        num_buckets = (end_freq - start_freq) // bucket_size
+        freq_buckets = np.linspace(start_freq, end_freq, num_buckets + 1)
+        
+        pred_amplitudes = np.abs(h_pred)
+        train_amplitudes = np.abs(h_train)
+        
+        corrective_eq = np.ones_like(pred_amplitudes)
+        
+        for i in range(num_buckets):
+            bucket_start = freq_buckets[i]
+            bucket_end = freq_buckets[i + 1]
+            
+            # Find indices corresponding to the current bucket
+            bucket_indices = np.where((0.5 * sr * w_pred / np.pi >= bucket_start) & (0.5 * sr * w_pred / np.pi < bucket_end))
+            
+            # Calculate the average amplitude in the current bucket
+            avg_pred_amp = np.mean(pred_amplitudes[bucket_indices])
+            avg_train_amp = np.mean(train_amplitudes[bucket_indices])
+            
+            # Calculate the corrective factor
+            if avg_pred_amp != 0:
+              corrective_factor = avg_train_amp / avg_pred_amp
+            else:
+              corrective_factor = 1
+            
+            # Apply the corrective factor to the EQ curve
+            corrective_eq[bucket_indices] *= corrective_factor
+        
+        # Smooth the corrective EQ curve
+        corrective_eq_smooth = signal.savgol_filter(corrective_eq, 51, 3)
+        
+        # Plot the corrective EQ curve
+        ax1.plot(0.5 * sr * w_pred / np.pi, corrective_eq_smooth, label='Corrective EQ', color='pink', linewidth=2, linestyle='--')
+        
+
         ax1.set_title('Frequency Response (Log and linear)')
-        ax1.plot(0.5 * sr * w_dry / np.pi, np.abs(h_dry), label='Dry', color='darkgray', linewidth=0.5, alpha=0.7)
-        ax1.plot(0.5 * sr * w_train / np.pi, np.abs(h_train), label='Train', color='red', linewidth=0.5, alpha=0.6)
-        ax1.plot(0.5 * sr * w_pred / np.pi, np.abs(h_pred), label='Pred', color='green', linewidth=0.5)
+        ax1.plot(0.5 * sr * w_dry / np.pi, np.abs(h_dry), label='Dry', color='darkgray', linewidth=0.5, alpha=0.7, solid_capstyle='round')
+        ax1.plot(0.5 * sr * w_train / np.pi, np.abs(h_train), label='Train', color='red', linewidth=0.5, alpha=0.6, solid_capstyle='round')
+        ax1.plot(0.5 * sr * w_pred / np.pi, np.abs(h_pred), label='Pred', color='green', linewidth=0.5, solid_capstyle='round')
         ax1.set_ylim([min(np.abs(h_train))*0.5, max(np.abs(h_train))*1.5])
         ax1.set_xscale('log')
         ax1.set_yscale('log')
@@ -120,9 +159,9 @@ class Compare:
         ax1.set_ylabel('Amplitude')
         ax1.legend()
 
-        ax1_bottom.plot(0.5 * sr * w_dry / np.pi, np.abs(h_dry), label='Dry', color='darkgray', linewidth=0.5, alpha=0.7)
-        ax1_bottom.plot(0.5 * sr * w_train / np.pi, np.abs(h_train), label='Train', color='red', linewidth=0.5, alpha=0.6)
-        ax1_bottom.plot(0.5 * sr * w_pred / np.pi, np.abs(h_pred), label='Pred', color='green', linewidth=0.5)
+        ax1_bottom.plot(0.5 * sr * w_dry / np.pi, np.abs(h_dry), label='Dry', color='darkgray', linewidth=0.5, alpha=0.7, solid_capstyle='round')
+        ax1_bottom.plot(0.5 * sr * w_train / np.pi, np.abs(h_train), label='Train', color='red', linewidth=0.5, alpha=0.6, solid_capstyle='round')
+        ax1_bottom.plot(0.5 * sr * w_pred / np.pi, np.abs(h_pred), label='Pred', color='green', linewidth=0.5, solid_capstyle='round')
         ax1_bottom.set_ylim([min(np.abs(h_train))*0.5, max(np.abs(h_train))*1.5])
         ax1_bottom.set_xscale('linear')
         ax1_bottom.set_yscale('log')
