@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib import cm
+from utils import Audio
 
 
 class Compare:
@@ -97,28 +98,35 @@ class Compare:
             diff_cmap = LinearSegmentedColormap.from_list('rwg', list(zip(nodes, rwg)))
             plt.colormaps.register(cmap=diff_cmap, name='rwg')
 
-        # ==============================================================================
-        # Top left (AX1): EQ Curve
-        # ==============================================================================
+        # Basic stuff needed by both charts and re-q
         w_dry, h_dry = signal.freqz(dry)
         w_train, h_train = signal.freqz(train)
         w_pred, h_pred = signal.freqz(pred)
-
-        # Calculate the difference in amplitude between y_pred and y_train in 500Hz buckets from 5kHz to 20kHz
-        bucket_size = 500
-        start_freq = 5000
-        end_freq = 20000
-        num_buckets = (end_freq - start_freq) // bucket_size
-        freq_buckets = np.linspace(start_freq, end_freq, num_buckets + 1)
         
         pred_amplitudes = np.abs(h_pred)
         train_amplitudes = np.abs(h_train)
+        # ==============================================================================
+        # Calculate EQ corrections
+        # ==============================================================================
+                # Calculate the difference in amplitude between y_pred and y_train in 500Hz buckets from 5kHz to 20kHz
+        hf_bucket_size = 200
+        hf_start_freq = 5000
+        hf_end_freq = 25000
+        hf_num_buckets = (hf_end_freq - hf_start_freq) // hf_bucket_size
+        hf_freq_buckets = np.linspace(hf_start_freq, hf_end_freq, hf_num_buckets + 1)
+
+        lf_bucket_size = 24
+        lf_start_freq = 0
+        lf_end_freq = 300
+        lf_num_buckets = (lf_end_freq - lf_start_freq) // lf_bucket_size
+        lf_freq_buckets = np.linspace(lf_start_freq, lf_end_freq, lf_num_buckets + 1)
+
+        hf_corrective_eq = np.ones_like(pred_amplitudes)
+        lf_corrective_eq = np.ones_like(pred_amplitudes)
         
-        corrective_eq = np.ones_like(pred_amplitudes)
-        
-        for i in range(num_buckets):
-            bucket_start = freq_buckets[i]
-            bucket_end = freq_buckets[i + 1]
+        for i in range(hf_num_buckets):
+            bucket_start = hf_freq_buckets[i]
+            bucket_end = hf_freq_buckets[i + 1]
             
             # Find indices corresponding to the current bucket
             bucket_indices = np.where((0.5 * sr * w_pred / np.pi >= bucket_start) & (0.5 * sr * w_pred / np.pi < bucket_end))
@@ -129,18 +137,64 @@ class Compare:
             
             # Calculate the corrective factor
             if avg_pred_amp != 0:
-              corrective_factor = avg_train_amp / avg_pred_amp
+              intensifier = 1
+              if(bucket_start >= 12000):
+                intensifier = np.interp(bucket_start, [12000, 20000], [1, 8])
+              if avg_pred_amp < avg_train_amp:
+                corrective_factor = (avg_train_amp / avg_pred_amp) * intensifier
+              else:
+                corrective_factor = (avg_train_amp / avg_pred_amp) / intensifier
             else:
               corrective_factor = 1
             
             # Apply the corrective factor to the EQ curve
-            corrective_eq[bucket_indices] *= corrective_factor
+            hf_corrective_eq[bucket_indices] *= corrective_factor
         
+        for i in range(lf_num_buckets):
+            bucket_start = lf_freq_buckets[i]
+            bucket_end = lf_freq_buckets[i + 1]
+            
+            # Find indices corresponding to the current bucket
+            bucket_indices = np.where((0.5 * sr * w_pred / np.pi >= bucket_start) & (0.5 * sr * w_pred / np.pi < bucket_end))
+            
+            # Calculate the average amplitude in the current bucket
+            avg_pred_amp = np.mean(pred_amplitudes[bucket_indices])
+            avg_train_amp = np.mean(train_amplitudes[bucket_indices])
+            
+            # Calculate the corrective factor
+            if avg_pred_amp != 0:
+              # intensifier = 0.7
+              # No proven need for intensifier yet
+              # if(bucket_start >= 12000):
+              intensifier = np.interp(bucket_start, [-20, lf_end_freq], [6, 1.2])
+              if avg_pred_amp < avg_train_amp:
+                corrective_factor = (avg_train_amp / avg_pred_amp) * intensifier
+              else:
+                corrective_factor = (avg_train_amp / avg_pred_amp) / intensifier
+            else:
+              corrective_factor = 1
+            
+            # Apply the corrective factor to the EQ curve
+            lf_corrective_eq[bucket_indices] *= corrective_factor
+
         # Smooth the corrective EQ curve
-        corrective_eq_smooth = signal.savgol_filter(corrective_eq, 51, 3)
+        hf_corrective_eq_smooth = signal.savgol_filter(hf_corrective_eq, 51, 3)
+        lf_corrective_eq_smooth = signal.savgol_filter(lf_corrective_eq, 51, 3)
+        # Merge the two smooth EQ curves
+        merged_corrective_eq_smooth = hf_corrective_eq_smooth * lf_corrective_eq_smooth
+        # Apply the corrective EQ curve to the predicted signal
+        corrected_wav = Audio.apply_correction(pred, merged_corrective_eq_smooth)
+        # corrected_wav = Audio.apply_correction(pred, hf_corrective_eq_smooth)
+        w_corrected, h_corrected = signal.freqz(corrected_wav)
+        # ==============================================================================
+        # Top left (AX1): EQ Curve
+        # ==============================================================================
+        
         
         # Plot the corrective EQ curve
-        ax1.plot(0.5 * sr * w_pred / np.pi, corrective_eq_smooth, label='Corrective EQ', color='pink', linewidth=2, linestyle='--')
+        ax1.plot(0.5 * sr * w_pred / np.pi, merged_corrective_eq_smooth, label='Corrective EQ', color='blue', linewidth=2, linestyle='--')
+        ax1.plot(0.5 * sr * w_corrected / np.pi, np.abs(h_corrected), label='Corrected', color='blue', linewidth=0.5, solid_capstyle='round')
+        ax1_bottom.plot(0.5 * sr * w_corrected / np.pi, np.abs(h_corrected), label='Corrected', color='blue', linewidth=0.5, solid_capstyle='round')
         
 
         ax1.set_title('Frequency Response (Log and linear)')
@@ -165,9 +219,10 @@ class Compare:
         ax1_bottom.set_ylim([min(np.abs(h_train))*0.5, max(np.abs(h_train))*1.5])
         ax1_bottom.set_xscale('linear')
         ax1_bottom.set_yscale('log')
-        ax1_bottom.set_xlim([20, 20000])
-        ax1_bottom.set_xticks([1, 1000, 5000, 10000, 15000, 20000])
-        ax1_bottom.set_xticklabels(['0','1k', '5k', '10k', '15k', '20k'])
+        ax1_bottom.set_xlim([0, 1000])
+        # ax1_bottom.set_xlim([20, 20000])
+        # ax1_bottom.set_xticks([1, 1000, 5000, 10000, 15000, 20000])
+        # ax1_bottom.set_xticklabels(['0','1k', '5k', '10k', '15k', '20k'])
 
         # ==============================================================================
         # Bottom left (AX2): Power Spectral Density
@@ -179,11 +234,13 @@ class Compare:
         f_dry, Pxx_dry = signal.welch(dry, sr, nperseg=1024)
         f_train, Pxx_train = signal.welch(train, sr, nperseg=1024)
         f_pred, Pxx_pred = signal.welch(pred, sr, nperseg=1024)
+        f_corr, Pxx_corr = signal.welch(corrected_wav, sr, nperseg=1024)
         
         ax2.set_title('Power Spectral Density')
         ax2.plot(f_dry, Pxx_dry, label='Dry', color='darkgray', linewidth=0.5, alpha=0.7)
         ax2.plot(f_train, Pxx_train, label='Train', color='red', linewidth=0.5, alpha=0.6)
         ax2.plot(f_pred, Pxx_pred, label='Pred', color='green', linewidth=0.5)
+        ax2.plot(f_corr, Pxx_corr, label='Corr', color='blue', linewidth=0.5)
         # Fix y axis based on train means identical graph scale across trainings
         ax2.set_ylim([min(Pxx_train)*0.5, max(Pxx_train)*1.5])
         ax2.set_xscale('log')
@@ -202,12 +259,15 @@ class Compare:
 
         f, t, sgram_pred = signal.spectrogram(pred, sr, nperseg=1024, noverlap=512, mode='magnitude')
         f, t, sgram_train = signal.spectrogram(train, sr, nperseg=1024, noverlap=512, mode='magnitude')
+        f, t, sgram_corr = signal.spectrogram(corrected_wav, sr, nperseg=1024, noverlap=512, mode='magnitude')
         sgram_pred_db = 10 * np.log10(sgram_pred + 1e-10)
         sgram_train_db = 10 * np.log10(sgram_train + 1e-10)
-        sgram_diff_db = sgram_pred_db - sgram_train_db
+        sgram_corr_db = 10 * np.log10(sgram_corr + 1e-10)
+        # sgram_diff_db = sgram_pred_db - sgram_train_db
+        sgram_diff_db = sgram_corr_db - sgram_train_db
 
         # Plot the difference
-        ax3.pcolormesh(t, f, sgram_diff_db, shading='auto', cmap='rwg', vmin=-10, vmax=10)
+        ax3.pcolormesh(t, f, sgram_diff_db, shading='auto', cmap='bwr_r', vmin=-10, vmax=10)
         ax3.set_ylabel('Frequency [Hz]')
         ax3.set_xlabel('Time [sec]')
         ax3.set_yscale('log')
@@ -223,14 +283,19 @@ class Compare:
         # ==============================================================================
         # Bottom right (AX4): Waveform comparison
         # ==============================================================================
-        overlap_waveform = np.minimum(pred, train)
+        overlap_waveform = np.minimum(corrected_wav, train)
 
         ax4.set_title('Waveform Comparison')
-        ax4.plot(x_range, pred, label='Pred +', color='green', alpha=0.5)
+        ax4.plot(x_range, corrected_wav, label='Corr +', color='green', alpha=0.5)
         ax4.plot(x_range, train, label='Train +', color='red', alpha=0.5)
         ax4.plot(x_range, overlap_waveform, label='both', color='white', alpha=1)
         ax4.plot(x_range, dry, label='Dry', color='lightgray', alpha=1)
         ax4.legend()
+
+        # Save the corrected wav file
+        corrected_wav_path = os.path.join(self.out_dir, 'y_corr.wav')
+        wavfile.write(corrected_wav_path, sr, corrected_wav)
+        print(f"Saved corrected wav file to {corrected_wav_path}")
 
         # Save the figure
         if(self.save):
