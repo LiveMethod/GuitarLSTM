@@ -98,62 +98,62 @@ class IO:
     Partial to the second since it enables easy lookup like features[id]
     
     """
-    def load_conditioned_batch(sources:List[Tuple[str, str, str]], batch_size:int = 4, split:int = 1, test_size:float = 0.15) -> Generator[
-        List[Tuple[
-            List[int],
-            Tuple[int, np.ndarray],
-            Tuple[int, np.ndarray]
-        ]], None, None]:
-        """
-        Load conditioned batch
-        ---
-        sources: a list of [conditioning, x_audio, y_audio] tuples
-        like [int[], file_path, file_path]
+    def load_conditioned_batch(
+      sources: List[Tuple[List[float], str, str]],
+      batch_size: int = 4,
+      split: int = 1,
+      test_size: float = 0.15
+  ) -> Generator[Tuple[Tuple[np.ndarray, np.ndarray, np.ndarray], Tuple[np.ndarray, np.ndarray, np.ndarray]], None, None]:
+      """
+      Load conditioned batch.
+      """
+      for i in range(0, len(sources), batch_size):
+          batch_tuples = sources[i:i + batch_size]
+          
+          # Lists to hold batch data
+          c_batch = []
+          x_batch = []
+          y_batch = []
+          
+          for c_data, x_path, y_path in batch_tuples:
+              sr_x, x_data = IO.load_wav(x_path)
+              sr_y, y_data = IO.load_wav(y_path)
+              x_data = x_data.astype(np.float32).flatten()
+              y_data = y_data.astype(np.float32).flatten()
+              # x_data = Data.normalize(x_data).reshape(-1, 1)
+              # y_data = Data.normalize(y_data).reshape(-1, 1)
+              x_data = Data.normalize(x_data).reshape(len(x_data), 1)
+              y_data = Data.normalize(y_data).reshape(len(y_data), 1)
 
-        A conditioned batch is a sequence of audio files paired 
-        with their corresopnding conditioning data.
-        
-        Returns: A generator full of [audio, conditioning] tuples, 
-        where audio is a tuple of [sr, data] and conditioning 
-        is a 2d array of like list[condition][value]
-        """
-        for i in range (0, len(sources), batch_size):
-            batch_tuples = sources[i:i + batch_size]
-            batch_data = []
+              if len(x_data) != len(y_data):
+                  raise ValueError(f"Length of x_data and y_data do not match for {x_path} and {y_path}")
 
-            for files in batch_tuples:
-                c_data, x_path, y_path = files
-                sr, x_data = IO.load_wav(x_path)
-                sr, y_data = IO.load_wav(y_path)
-                x_data = x_data.astype(np.float32).flatten()
-                x_data = Data.normalize(x_data).reshape(len(x_data), 1)
-                y_data = y_data.astype(np.float32).flatten()
-                y_data = Data.normalize(y_data).reshape(len(y_data), 1)
+              # Create conditioning array
+              c_array = np.array(c_data, dtype=np.float32)
+              c_array = np.tile(c_array, (len(x_data), 1))
 
-                if(len(x_data) != len(y_data)):
-                    raise ValueError(f"Length of x_data and y_data do not match for {x_path} and {y_path}")                
+              if split > 1:
+                  # Split data into chunks
+                  num_samples = (len(x_data) // split) * split
+                  x_splits = np.split(x_data[:num_samples], split)
+                  y_splits = np.split(y_data[:num_samples], split)
+                  c_splits = np.split(c_array[:num_samples], split)
 
-                if(split > 1):
-                    x_chunks = np.split(x_data[:(len(x_data)//split)*split], split)
-                    y_chunks = np.split(y_data[:(len(y_data)//split)*split], split)
-                    if(len(x_chunks) != len(y_chunks)):
-                        raise ValueError(f"Number of x_chunks and y_chunks do not match for {x_path} and {y_path}")
-                    c_chunks = []
-                    for xc in x_chunks:
-                        conditioning = []
-                        for c in c_data:
-                          aaaaaaa = np.repeat(c, len(xc), axis=0)
-                          conditioning.append(aaaaaaa)
+                  c_batch.extend(c_splits)
+                  x_batch.extend(x_splits)
+                  y_batch.extend(y_splits)
+              else:
+                  c_batch.append(c_array)
+                  x_batch.append(x_data)
+                  y_batch.append(y_data)
+          
+          # Convert lists to NumPy arrays
+          c_batch = np.concatenate(c_batch, axis=0)
+          x_batch = np.concatenate(x_batch, axis=0)
+          y_batch = np.concatenate(y_batch, axis=0)
 
-                    batch_data.extend([c_chunks, x_chunks, y_chunks])
-                else:
-                    conditioning = []
-                    for c in c_data:
-                        aaaaaaa = np.repeat(c, len(x_data), axis=0)
-                        conditioning.append(aaaaaaa)
-
-                    batch_data.append([c_data, x_data, y_data])
-            split_idx = int(len(batch_data) * (1 - test_size))
-            train_data = batch_data[:split_idx]
-            test_data = batch_data[split_idx:]
-            yield train_data, test_data
+          # Split into training and testing
+          split_idx = int(len(x_batch) * (1 - test_size))
+          train_data = (c_batch[:split_idx], x_batch[:split_idx], y_batch[:split_idx])
+          test_data = (c_batch[split_idx:], x_batch[split_idx:], y_batch[split_idx:])
+          yield train_data, test_data

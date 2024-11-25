@@ -305,7 +305,7 @@ class Compare:
         ax2.plot(f_dry, Pxx_dry, label='Dry', color='darkgray', linewidth=0.5, alpha=0.7)
         ax2.plot(f_train, Pxx_train, label='Train', color='red', linewidth=0.5, alpha=0.6)
         ax2.plot(f_pred, Pxx_pred, label='Pred', color='green', linewidth=0.5)
-        ax2.plot(f_corr, Pxx_corr, label='Corr', color='blue', linewidth=0.5)
+        # ax2.plot(f_corr, Pxx_corr, label='Corr', color='blue', linewidth=0.5)
         # Fix y axis based on train means identical graph scale across trainings
         ax2.set_ylim([min(Pxx_train)*0.5, max(Pxx_train)*1.5])
         ax2.set_xscale('log')
@@ -329,7 +329,7 @@ class Compare:
         sgram_train_db = 10 * np.log10(sgram_train + 1e-10)
         sgram_corr_db = 10 * np.log10(sgram_corr + 1e-10)
         # sgram_diff_db = sgram_pred_db - sgram_train_db
-        sgram_diff_db = sgram_corr_db - sgram_train_db
+        sgram_diff_db = sgram_pred_db - sgram_train_db
 
         # Plot the difference
         ax3.pcolormesh(t, f, sgram_diff_db, shading='auto', cmap='bwr_r', vmin=-10, vmax=10)
@@ -348,10 +348,15 @@ class Compare:
         # # ==============================================================================
         # # Bottom right (AX4): Waveform comparison
         # # ==============================================================================
-        overlap_waveform = np.minimum(corrected_wav, train)
+        shortest_len = min(len(pred), len(train))
+        pred = pred[:shortest_len]
+        train = train[:shortest_len]
+        dry = dry[:shortest_len]
+        x_range = np.linspace(0, len(pred) / sr, num=len(pred))
+        overlap_waveform = np.minimum(pred, train)
 
         ax4.set_title('Waveform Comparison')
-        ax4.plot(x_range, corrected_wav, label='Corr +', color='green', alpha=0.5)
+        ax4.plot(x_range, pred, label='Corr +', color='green', alpha=0.5)
         ax4.plot(x_range, train, label='Train +', color='red', alpha=0.5)
         ax4.plot(x_range, overlap_waveform, label='both', color='white', alpha=1)
         ax4.plot(x_range, dry, label='Dry', color='lightgray', alpha=1)

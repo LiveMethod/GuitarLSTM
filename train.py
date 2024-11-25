@@ -11,6 +11,7 @@ from keras._tf_keras.keras.layers import LSTM, Conv1D, Dense, Input, Concatenate
 from keras._tf_keras.keras.optimizers import Adam
 from keras._tf_keras.keras.backend import clear_session
 from keras._tf_keras.keras.models import Model
+from keras._tf_keras.keras.layers import TimeDistributed
 import json
 
 from compare import Compare
@@ -25,23 +26,23 @@ def main(
 ):
 
     timestamp = datetime.datetime.now().strftime("%H%M%S").lower()
-    name="testing_conditioning"
+    name="Multi-silver"
     out_dir = f'{name}_{timestamp}'
     os.makedirs(f'models/{out_dir}')
     print(f"Current output directory: {out_dir}")
 
     sources = [
-      [[0.0], "data/silver_conditioned/c_gain_00.wav", "data/silver_conditioned/raw.wav"],
-      [[0.1], "data/silver_conditioned/c_gain_01.wav", "data/silver_conditioned/raw.wav"],
-      [[0.2], "data/silver_conditioned/c_gain_02.wav", "data/silver_conditioned/raw.wav"],
-      [[0.3], "data/silver_conditioned/c_gain_03.wav", "data/silver_conditioned/raw.wav"],
-      [[0.4], "data/silver_conditioned/c_gain_04.wav", "data/silver_conditioned/raw.wav"],
-      [[0.5], "data/silver_conditioned/c_gain_05.wav", "data/silver_conditioned/raw.wav"],
-      [[0.6], "data/silver_conditioned/c_gain_06.wav", "data/silver_conditioned/raw.wav"],
-      [[0.7], "data/silver_conditioned/c_gain_07.wav", "data/silver_conditioned/raw.wav"],
-      [[0.8], "data/silver_conditioned/c_gain_08.wav", "data/silver_conditioned/raw.wav"],
-      [[0.9], "data/silver_conditioned/c_gain_09.wav", "data/silver_conditioned/raw.wav"],
-      [[1.0], "data/silver_conditioned/c_gain_10.wav", "data/silver_conditioned/raw.wav"]
+      [[0.0], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_00.wav"],
+      [[0.1], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_01.wav"],
+      [[0.2], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_02.wav"],
+      [[0.3], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_03.wav"],
+      [[0.4], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_04.wav"],
+      [[0.5], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_04.wav"],
+      [[0.6], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_06.wav"],
+      [[0.7], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_07.wav"],
+      [[0.8], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_08.wav"],
+      [[0.9], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_09.wav"],
+      [[1.0], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_10.wav"]
     ]
     for source in sources:
       for path in source[1:]:  # Skip the non-path element
@@ -51,9 +52,6 @@ def main(
     # =========================================================================
     # CONFIGURATION
     # =========================================================================
-
-    
-    conditioning_features = 1 # just gain for now
 
     if training_mode == 'extended':
          # Extended Training (~60x longer than Accuracy Training)
@@ -72,8 +70,8 @@ def main(
     else:
         learning_rate = 0.01
         conv1d_strides = 12
-        conv1d_filters = 8
-        hidden_units = 96
+        conv1d_filters = 16
+        hidden_units = 64
         kernel_size = 12
     
     config_summary = {
@@ -102,23 +100,14 @@ def main(
     clear_session()
     history = None
     # model = Sequential()
-
-    # Audio processing branch
     audio_input = Input(shape=(input_size, 1), name='audio_input')
-    x = Conv1D(conv1d_filters, kernel_size, strides=conv1d_strides, activation=None, padding='same')(audio_input)
-    x = Conv1D(conv1d_filters, kernel_size, strides=conv1d_strides, activation=None, padding='same')(x)
+    control_input = Input(shape=(input_size, 1), name='control_input')
+    merged_input = Concatenate(axis=-1)([audio_input, control_input])
+    x = Conv1D(conv1d_filters, kernel_size=kernel_size, strides=conv1d_strides, activation=None, padding='same')(merged_input)
+    x = Conv1D(conv1d_filters, kernel_size=kernel_size, strides=conv1d_strides, activation=None, padding='same')(x)
     x = LSTM(hidden_units)(x)
+    output = Dense(1, activation=None)(x)
 
-    # Control processing branch
-    control_input = Input(shape=(conditioning_features,), name='control_input')
-    c = Dense(16)(control_input)
-    c = Dense(16)(c)
-    
-    # Merge branches
-    merged = Concatenate()([x, c])
-    output = Dense(1, activation=None)(merged)
-
-    ###
     model = Model(inputs=[audio_input, control_input], outputs=output)
     model.compile(optimizer=Adam(learning_rate=learning_rate), loss=Data.dual_loss, metrics=[Data.dual_loss])
 
@@ -137,33 +126,39 @@ def main(
     # Training stage
     history = None
     print(f'Training...')
-    validation_c = []
-    validation_x = []
-    validation_y = []
+    validation_c = None
+    validation_x = None
+    validation_y = None
     
 
     for batch_num, (train_batch, test_batch) in enumerate(IO.load_conditioned_batch(sources)):
         c_batch, x_batch, y_batch = train_batch
+
         print(f'Processing batch {batch_num + 1}...')
 
         # Prepare data
-        y_ordered = y_batch[input_size-1:]
-        indices = np.arange(input_size) + np.arange(len(x_batch)-input_size+1)[:,np.newaxis]
+        y_ordered = y_batch[input_size - 1:]
+        indices = np.arange(input_size) + np.arange(len(x_batch) - input_size + 1)[:, np.newaxis]
         x_ordered = tf.gather(x_batch, indices)
         c_ordered = tf.gather(c_batch, indices)
-        
+
         # Shuffle data
         shuffled_indices = np.random.permutation(len(x_ordered))
-        c_random = tf.gather(c_ordered, shuffled_indices)
         x_random = tf.gather(x_ordered, shuffled_indices)
         y_random = tf.gather(y_ordered, shuffled_indices)
-        
+        c_random = tf.gather(c_ordered, shuffled_indices)
+
+        # Ensure shapes are correct
+        print(f"x_random shape: {x_random.shape}")  # Should be (batch_size, input_size, 1)
+        print(f"c_random shape: {c_random.shape}")  # Should be (batch_size, num_control_params)
+        print(f"y_random shape: {y_random.shape}")  # Should be (batch_size, 1)
+
         # Train on batch
         batch_history = model.fit(
-            [x_random, c_random], 
-            y_random, 
-            epochs=max_epochs, 
-            batch_size=batch_size, 
+            x={'audio_input': x_random, 'control_input': c_random},
+            y=y_random,
+            epochs=max_epochs,
+            batch_size=batch_size,
             validation_split=0.15
         )
 
@@ -178,13 +173,19 @@ def main(
     
         # Store validation components
         if validation_x is None:
-            validation_c = vc
-            validation_x = vx
-            validation_y = vy
+            if len(vc) > 0 and len(vx) > 0 and len(vy) > 0:
+              validation_c = vc
+              validation_x = vx
+              validation_y = vy
+            else:
+              print("Validation data is empty and so is this batch")
         else:
-            validation_c = np.concatenate([validation_c, vc])
-            validation_x = np.concatenate([validation_x, vx])
-            validation_y = np.concatenate([validation_y, vy])
+            if len(vc) > 0 and len(vx) > 0 and len(vy) > 0:
+              validation_c = np.concatenate([validation_c, vc])
+              validation_x = np.concatenate([validation_x, vx])
+              validation_y = np.concatenate([validation_y, vy])
+            else:
+              print("Validation data is empty")
             
     
     # =========================================================================
@@ -193,22 +194,33 @@ def main(
 
     # Run Prediction #################################################
     print("Running prediction...")
-    validation_data = (validation_x, validation_y, validation_c)
 
-    y_test = validation_y[input_size-1:]
+    x_wav = validation_x[input_size-1:]
+    y_wav = validation_y[input_size-1:]
     indices = np.arange(input_size) + np.arange(len(validation_x)-input_size+1)[:,np.newaxis]
     x_test = tf.gather(validation_x,indices)
     c_test = tf.gather(validation_c,indices)
+    
+    c_2 = np.full((len(validation_c), 1), [0.2])
+    c2 = tf.gather(c_2, indices)
+    c_5 = np.full((len(validation_c), 1), [0.5])
+    c5 = tf.gather(c_5, indices)
+    c_9 = np.full((len(validation_c), 1), [0.9])
+    c9 = tf.gather(c_9, indices)
 
-    prediction = model.predict([x_test, c_test], batch_size=batch_size)
+    pred2 = model.predict([x_test, c2], batch_size=batch_size)
+    pred5 = model.predict([x_test, c5], batch_size=batch_size)
+    pred9 = model.predict([x_test, c9], batch_size=batch_size)
 
     # =========================================================================
     # SAVE RESULTS
     # =========================================================================
 
-    wavfile.write(f'models/{out_dir}/y_pred.wav', sr, prediction.flatten().astype(np.float32))
-    wavfile.write(f'models/{out_dir}/x_test.wav', sr, x_test.flatten().astype(np.float32))
-    wavfile.write(f'models/{out_dir}/y_test.wav', sr, y_test.flatten().astype(np.float32))
+    wavfile.write(f'models/{out_dir}/y_pred2.wav', sr, pred2.flatten().astype(np.float32))
+    wavfile.write(f'models/{out_dir}/y_pred5.wav', sr, pred5.flatten().astype(np.float32))
+    wavfile.write(f'models/{out_dir}/y_pred9.wav', sr, pred9.flatten().astype(np.float32))
+    wavfile.write(f'models/{out_dir}/x_test.wav', sr, x_wav.flatten().astype(np.float32))
+    wavfile.write(f'models/{out_dir}/y_test.wav', sr, y_wav.flatten().astype(np.float32))
     print("Prediction complete \n")
 
     model_save_path = f'models/{out_dir}/{name}.h5'
@@ -237,4 +249,4 @@ def main(
     # DATA VIZ / RECAP
     # =========================================================================
 
-    Compare(out_dir)
+    # Compare(out_dir)
