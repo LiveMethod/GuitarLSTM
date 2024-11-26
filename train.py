@@ -207,6 +207,8 @@ def main(
 
     x_wav = validation_x[input_size-1:]
     y_wav = validation_y[input_size-1:]
+    
+    # In a past version this was input_size +1 at the end of the second arange. Unclear if that's needed
     indices = np.arange(input_size) + np.arange(len(validation_x)-input_size)[:,np.newaxis]
     x_test = tf.gather(validation_x,indices)
     c_test = tf.gather(validation_c,indices)
