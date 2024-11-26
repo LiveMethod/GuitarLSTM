@@ -34,15 +34,15 @@ def main(
     sources = [
       [[0.0], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_00.wav"],
       # [[0.1], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_01.wav"],
-      [[0.2], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_02.wav"],
-      # [[0.3], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_03.wav"],
+      # [[0.2], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_02.wav"],
+      [[0.3], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_03.wav"],
       # [[0.4], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_04.wav"],
-      [[0.5], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_04.wav"],
+      # [[0.5], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_04.wav"],
       # [[0.6], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_06.wav"],
-      # [[0.7], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_07.wav"],
+      [[0.7], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_07.wav"],
       # [[0.8], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_08.wav"],
-      [[0.9], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_09.wav"],
-      # [[1.0], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_10.wav"]
+      # [[0.9], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_09.wav"],
+      [[1.0], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_10.wav"]
     ]
     for source in sources:
       for path in source[1:]:  # Skip the non-path element
@@ -71,7 +71,7 @@ def main(
         learning_rate = 0.01
         conv1d_strides = 12
         conv1d_filters = 16
-        hidden_units = 26
+        hidden_units = 50
         kernel_size = 12
     
     config_summary = {
@@ -102,9 +102,11 @@ def main(
     # model = Sequential()
     audio_input = Input(shape=(input_size, 1), name='audio_input')
     control_input = Input(shape=(input_size, 1), name='control_input')
-    merged_input = Concatenate(axis=-1)([audio_input, control_input])
-    x = Conv1D(conv1d_filters, kernel_size=kernel_size, strides=conv1d_strides, activation=None, padding='same')(merged_input)
-    x = Conv1D(conv1d_filters, kernel_size=kernel_size, strides=conv1d_strides, activation=None, padding='same')(x)
+    c = Dense(16, activation='relu')(control_input)
+    c = Dense(16, activation='relu')(c)
+    merged_input = Concatenate(axis=-1)([audio_input, c])
+    x = Conv1D(conv1d_filters, kernel_size=kernel_size, strides=conv1d_strides, activation='relu', padding='same')(merged_input)
+    x = Conv1D(conv1d_filters, kernel_size=kernel_size, strides=conv1d_strides, activation='relu', padding='same')(x)
     x = LSTM(hidden_units)(x)
     output = Dense(1, activation=None)(x)
 
@@ -200,6 +202,9 @@ def main(
       json.dump(final_summary, f, indent=2)
     print(f'Params saved for training mode "{training_mode}"')
 
+    sys.stderr = open(os.devnull, "w")  # silence stderr
+    model.save(model_save_path)
+    sys.stderr = sys.__stderr__  # unsilence stderr
     print(f"Training complete. Model saved to: {model_save_path}")
 
     # Run Prediction #################################################
@@ -244,12 +249,6 @@ def main(
     wavfile.write(f'models/{out_dir}/x_test.wav', sr, x_wav.flatten().astype(np.float32))
     wavfile.write(f'models/{out_dir}/y_test.wav', sr, y_wav.flatten().astype(np.float32))
     print("Prediction complete \n")
-
-    
-
-    sys.stderr = open(os.devnull, "w")  # silence stderr
-    model.save(model_save_path)
-    sys.stderr = sys.__stderr__  # unsilence stderr
 
     
 
