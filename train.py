@@ -26,23 +26,23 @@ def main(
 ):
 
     timestamp = datetime.datetime.now().strftime("%H%M%S").lower()
-    name="Multi-silver"
+    name="multi silver"
     out_dir = f'{name}_{timestamp}'
     os.makedirs(f'models/{out_dir}')
     print(f"Current output directory: {out_dir}")
 
     sources = [
       [[0.0], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_00.wav"],
-      [[0.1], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_01.wav"],
+      # [[0.1], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_01.wav"],
       [[0.2], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_02.wav"],
-      [[0.3], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_03.wav"],
-      [[0.4], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_04.wav"],
+      # [[0.3], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_03.wav"],
+      # [[0.4], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_04.wav"],
       [[0.5], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_04.wav"],
-      [[0.6], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_06.wav"],
-      [[0.7], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_07.wav"],
-      [[0.8], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_08.wav"],
+      # [[0.6], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_06.wav"],
+      # [[0.7], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_07.wav"],
+      # [[0.8], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_08.wav"],
       [[0.9], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_09.wav"],
-      [[1.0], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_10.wav"]
+      # [[1.0], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_10.wav"]
     ]
     for source in sources:
       for path in source[1:]:  # Skip the non-path element
@@ -71,7 +71,7 @@ def main(
         learning_rate = 0.01
         conv1d_strides = 12
         conv1d_filters = 16
-        hidden_units = 64
+        hidden_units = 26
         kernel_size = 12
     
     config_summary = {
@@ -108,7 +108,7 @@ def main(
     x = LSTM(hidden_units)(x)
     output = Dense(1, activation=None)(x)
 
-    model = Model(inputs=[audio_input, control_input], outputs=output)
+    model = Model(inputs={'audio_input': audio_input, 'control_input': control_input}, outputs=output)
     model.compile(optimizer=Adam(learning_rate=learning_rate), loss=Data.dual_loss, metrics=[Data.dual_loss])
 
     print('\n') ;model.summary(); print('\n')
@@ -133,6 +133,7 @@ def main(
 
     for batch_num, (train_batch, test_batch) in enumerate(IO.load_conditioned_batch(sources)):
         c_batch, x_batch, y_batch = train_batch
+        c_val, x_val, y_val = test_batch
 
         print(f'Processing batch {batch_num + 1}...')
 
@@ -147,11 +148,6 @@ def main(
         x_random = tf.gather(x_ordered, shuffled_indices)
         y_random = tf.gather(y_ordered, shuffled_indices)
         c_random = tf.gather(c_ordered, shuffled_indices)
-
-        # Ensure shapes are correct
-        print(f"x_random shape: {x_random.shape}")  # Should be (batch_size, input_size, 1)
-        print(f"c_random shape: {c_random.shape}")  # Should be (batch_size, num_control_params)
-        print(f"y_random shape: {y_random.shape}")  # Should be (batch_size, 1)
 
         # Train on batch
         batch_history = model.fit(
@@ -168,67 +164,28 @@ def main(
         else:
             for key in history.history.keys():
                 history.history[key].extend(batch_history.history[key])
-        
-        vc, vx, vy = test_batch
     
         # Store validation components
         if validation_x is None:
-            if len(vc) > 0 and len(vx) > 0 and len(vy) > 0:
-              validation_c = vc
-              validation_x = vx
-              validation_y = vy
+            if len(c_val) > 0 and len(x_val) > 0 and len(y_val) > 0:
+              validation_c = c_val
+              validation_x = x_val
+              validation_y = y_val
             else:
               print("Validation data is empty and so is this batch")
         else:
-            if len(vc) > 0 and len(vx) > 0 and len(vy) > 0:
-              validation_c = np.concatenate([validation_c, vc])
-              validation_x = np.concatenate([validation_x, vx])
-              validation_y = np.concatenate([validation_y, vy])
+            if len(c_val) > 0 and len(x_val) > 0 and len(y_val) > 0:
+              validation_c = np.concatenate([validation_c, c_val])
+              validation_x = np.concatenate([validation_x, x_val])
+              validation_y = np.concatenate([validation_y, y_val])
             else:
               print("Validation data is empty")
             
     
     # =========================================================================
-    # PREDICTION
+    # PREDICT AND SAVE
     # =========================================================================
-
-    # Run Prediction #################################################
-    print("Running prediction...")
-
-    x_wav = validation_x[input_size-1:]
-    y_wav = validation_y[input_size-1:]
-    indices = np.arange(input_size) + np.arange(len(validation_x)-input_size+1)[:,np.newaxis]
-    x_test = tf.gather(validation_x,indices)
-    c_test = tf.gather(validation_c,indices)
-    
-    c_2 = np.full((len(validation_c), 1), [0.2])
-    c2 = tf.gather(c_2, indices)
-    c_5 = np.full((len(validation_c), 1), [0.5])
-    c5 = tf.gather(c_5, indices)
-    c_9 = np.full((len(validation_c), 1), [0.9])
-    c9 = tf.gather(c_9, indices)
-
-    pred2 = model.predict([x_test, c2], batch_size=batch_size)
-    pred5 = model.predict([x_test, c5], batch_size=batch_size)
-    pred9 = model.predict([x_test, c9], batch_size=batch_size)
-
-    # =========================================================================
-    # SAVE RESULTS
-    # =========================================================================
-
-    wavfile.write(f'models/{out_dir}/y_pred2.wav', sr, pred2.flatten().astype(np.float32))
-    wavfile.write(f'models/{out_dir}/y_pred5.wav', sr, pred5.flatten().astype(np.float32))
-    wavfile.write(f'models/{out_dir}/y_pred9.wav', sr, pred9.flatten().astype(np.float32))
-    wavfile.write(f'models/{out_dir}/x_test.wav', sr, x_wav.flatten().astype(np.float32))
-    wavfile.write(f'models/{out_dir}/y_test.wav', sr, y_wav.flatten().astype(np.float32))
-    print("Prediction complete \n")
-
     model_save_path = f'models/{out_dir}/{name}.h5'
-
-    sys.stderr = open(os.devnull, "w")  # silence stderr
-    model.save(model_save_path)
-    sys.stderr = sys.__stderr__  # unsilence stderr
-
     model_architecture = json.loads(model.to_json())
     final_summary = {
       **config_summary,
@@ -244,6 +201,46 @@ def main(
     print(f'Params saved for training mode "{training_mode}"')
 
     print(f"Training complete. Model saved to: {model_save_path}")
+
+    # Run Prediction #################################################
+    print("Running prediction...")
+
+    x_wav = validation_x[input_size-1:]
+    y_wav = validation_y[input_size-1:]
+    indices = np.arange(input_size) + np.arange(len(validation_x)-input_size)[:,np.newaxis]
+    x_test = tf.gather(validation_x,indices)
+    c_test = tf.gather(validation_c,indices)
+    
+    # c_2 = Data.create_conditioning_array(0.2, indices, input_size)
+    c_2 = np.full((len(validation_c), 1), [0.2])
+    c2 = tf.gather(c_2, indices)
+    # c_5 = Data.create_conditioning_array(0.5, indices, input_size)
+    c_5 = np.full((len(validation_c), 1), [0.5])
+    c5 = tf.gather(c_5, indices)
+    # c_9 = Data.create_conditioning_array(0.9, indices, input_size)
+    c_9 = np.full((len(validation_c), 1), [0.9])
+    c9 = tf.gather(c_9, indices)
+
+    pred2 = model.predict(x={'audio_input': x_test, 'control_input': c2}, batch_size=batch_size)
+    wavfile.write(f'models/{out_dir}/y_pred2.wav', sr, pred2.flatten().astype(np.float32))
+
+    pred5 = model.predict({'audio_input': x_test, 'control_input': c5}, batch_size=batch_size)
+    wavfile.write(f'models/{out_dir}/y_pred5.wav', sr, pred5.flatten().astype(np.float32))
+
+    pred9 = model.predict({'audio_input': x_test, 'control_input': c9}, batch_size=batch_size)
+    wavfile.write(f'models/{out_dir}/y_pred9.wav', sr, pred9.flatten().astype(np.float32))
+
+    wavfile.write(f'models/{out_dir}/x_test.wav', sr, x_wav.flatten().astype(np.float32))
+    wavfile.write(f'models/{out_dir}/y_test.wav', sr, y_wav.flatten().astype(np.float32))
+    print("Prediction complete \n")
+
+    
+
+    sys.stderr = open(os.devnull, "w")  # silence stderr
+    model.save(model_save_path)
+    sys.stderr = sys.__stderr__  # unsilence stderr
+
+    
 
     # =========================================================================
     # DATA VIZ / RECAP
