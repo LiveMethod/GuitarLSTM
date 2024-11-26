@@ -223,6 +223,15 @@ def main(
     c_9 = np.full((len(validation_c), 1), [0.9])
     c9 = tf.gather(c_9, indices)
 
+    ramp_up = np.linspace(0, 1, len(validation_c) // 2)
+    ramp_down = np.linspace(1, 0, len(validation_c) - len(ramp_up))
+    c_misc = np.concatenate([ramp_up, ramp_down])
+    c_misc = c_misc[:, np.newaxis]  # Reshape to match the expected input shape
+    c_misc = tf.gather(c_misc, indices)
+
+    pred_all = model.predict(x={'audio_input': x_test, 'control_input': c_misc}, batch_size=batch_size)
+    wavfile.write(f'models/{out_dir}/y_pred_all.wav', sr, pred_all.flatten().astype(np.float32))
+
     pred2 = model.predict(x={'audio_input': x_test, 'control_input': c2}, batch_size=batch_size)
     wavfile.write(f'models/{out_dir}/y_pred2.wav', sr, pred2.flatten().astype(np.float32))
 
