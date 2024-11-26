@@ -61,34 +61,6 @@ class IO:
         with open(file_path) as f:
             return json.load(f)
     
-    # def load_wav_batch(file_paths:List[str], batch_size:int = 4, split:int = 1, preprocess:bool = True) -> Generator[
-    #     List[Tuple[int, np.ndarray]], None, None]:
-    #     """
-    #     Load a batch of wav files
-    #     ---
-    #     Optionally supports splitting individual files into chunks
-    #     Preprocesses audio by default
-    #     """
-    #     for i in range (0, len(file_paths), batch_size):
-    #         batch_files = file_paths[i:i + batch_size]
-    #         batch_data = []
-
-    #         for file_path in batch_files:
-    #             sr, data = IO.load_wav(file_path)
-
-    #             if preprocess:
-    #                 data = data.astype(np.float32).flatten()
-    #                 data = Data.normalize(data).reshape(len(data), 1)
-
-    #             if(split > 1):
-    #                 chunks = np.split(data[:(len(data)//split)*split], split)
-    #                 batch_data.extend(chunks)
-    #             else:
-    #                 batch_data.append(data)
-
-    #         yield batch_data
-    
-
     """
     Should this be a full feature list for ever sample, or a list of features each all samples long?
     IE if we have gain:4 and tone:6, do we return

@@ -7,7 +7,7 @@ import numpy as np
 from scipy.io import wavfile
 import tensorflow as tf
 from keras import Sequential
-from keras._tf_keras.keras.layers import LSTM, Conv1D, Dense, Input, Concatenate
+from keras._tf_keras.keras.layers import LSTM, Conv1D, Dense, Input, Concatenate, Dropout
 from keras._tf_keras.keras.optimizers import Adam
 from keras._tf_keras.keras.backend import clear_session
 from keras._tf_keras.keras.models import Model
@@ -20,13 +20,13 @@ from utils import Data, IO
 def main(
     training_mode:Literal['fast', 'accurate', 'extended'] = 'fast',
     split_data:int = 1,
-    batch_size:int = 4096,
+    batch_size:int = 4096*2,
     input_size:int = 100,
     max_epochs:int = 1,
 ):
 
     timestamp = datetime.datetime.now().strftime("%H%M%S").lower()
-    name="multi silver"
+    name="multi silver all "
     out_dir = f'{name}_{timestamp}'
     os.makedirs(f'models/{out_dir}')
     print(f"Current output directory: {out_dir}")
@@ -44,6 +44,19 @@ def main(
       # [[0.9], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_09.wav"],
       [[1.0], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_10.wav"]
     ]
+    # sources = [
+    #   [[0.0], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_00.wav"],
+    #   [[0.1], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_01.wav"],
+    #   [[0.2], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_02.wav"],
+    #   [[0.3], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_03.wav"],
+    #   [[0.4], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_04.wav"],
+    #   [[0.5], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_04.wav"],
+    #   [[0.6], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_06.wav"],
+    #   [[0.7], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_07.wav"],
+    #   [[0.8], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_08.wav"],
+    #   [[0.9], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_09.wav"],
+    #   [[1.0], "data/silver_conditioned/raw.wav", "data/silver_conditioned/c_gain_10.wav"]
+    # ]
     for source in sources:
       for path in source[1:]:  # Skip the non-path element
         if not os.path.exists(path):
@@ -102,12 +115,12 @@ def main(
     # model = Sequential()
     audio_input = Input(shape=(input_size, 1), name='audio_input')
     control_input = Input(shape=(input_size, 1), name='control_input')
-    c = Dense(16, activation='relu')(control_input)
-    c = Dense(16, activation='relu')(c)
-    merged_input = Concatenate(axis=-1)([audio_input, c])
+    merged_input = Concatenate(axis=-1)([audio_input, control_input])
     x = Conv1D(conv1d_filters, kernel_size=kernel_size, strides=conv1d_strides, activation='relu', padding='same')(merged_input)
     x = Conv1D(conv1d_filters, kernel_size=kernel_size, strides=conv1d_strides, activation='relu', padding='same')(x)
+    # x = Dropout(0.2)(x)
     x = LSTM(hidden_units)(x)
+    # x = Dropout(0.2)(x)
     output = Dense(1, activation=None)(x)
 
     model = Model(inputs={'audio_input': audio_input, 'control_input': control_input}, outputs=output)
