@@ -12,6 +12,7 @@ from keras._tf_keras.keras.optimizers import Adam
 from keras._tf_keras.keras.backend import clear_session
 from keras._tf_keras.keras.models import Model
 from keras._tf_keras.keras.losses import MeanSquaredError
+import tf2onnx
 import json
 
 from compare import Compare
@@ -224,6 +225,23 @@ def main(
     model.save(model_save_path)
     # sys.stderr = sys.__stderr__  # unsilence stderr
     print(f"Training complete. Model saved to: {model_save_path}")
+
+    # Define the TensorSpec for each input
+    spec = (
+        tf.TensorSpec(model.inputs[0].shape, tf.float32, name="audio_input"),
+        tf.TensorSpec(model.inputs[1].shape, tf.float32, name="gain"),
+        tf.TensorSpec(model.inputs[2].shape, tf.float32, name="treble"),
+        tf.TensorSpec(model.inputs[3].shape, tf.float32, name="bass"),
+    )
+
+    # Convert Keras model to ONNX
+    onnx_model, _ = tf2onnx.convert.from_keras(model, input_signature=spec, opset=13)
+
+    # Save the ONNX model to a file
+    with open(f"models/{out_dir}/model.onnx", "wb") as f:
+        f.write(onnx_model.SerializeToString())
+
+    print("Model saved in ONNX format to 'model.onnx'")
 
     # Run Prediction #################################################
     print("Running prediction...")
