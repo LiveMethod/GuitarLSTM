@@ -72,9 +72,10 @@ class IO:
     """
     def load_conditioned_batch(
       sources: List[Tuple[List[float], str, str]],
-      batch_size: int = 4,
+      batch_size: int = 15,
       split: int = 1,
       test_size: float = 0.15
+      # return type is a pair (train, test) of data (c, x, y)  .... c is nested, so more like (c[], x, y)
   ) -> Generator[Tuple[Tuple[np.ndarray, np.ndarray, np.ndarray], Tuple[np.ndarray, np.ndarray, np.ndarray]], None, None]:
       """
       Load conditioned batch.
@@ -83,17 +84,16 @@ class IO:
           batch_tuples = sources[i:i + batch_size]
           
           # Lists to hold batch data
-          c_batch = []
+          conditions_batch = [np.empty((0, 1), dtype=np.float32) for _ in batch_tuples[0][0]]
           x_batch = []
           y_batch = []
           
           for c_data, x_path, y_path in batch_tuples:
+              # print(f"Loading ${c_data} and {x_path} and {y_path}")
               sr_x, x_data = IO.load_wav(x_path)
               sr_y, y_data = IO.load_wav(y_path)
               x_data = x_data.astype(np.float32).flatten()
               y_data = y_data.astype(np.float32).flatten()
-              # x_data = Data.normalize(x_data).reshape(-1, 1)
-              # y_data = Data.normalize(y_data).reshape(-1, 1)
               x_data = Data.normalize(x_data).reshape(len(x_data), 1)
               y_data = Data.normalize(y_data).reshape(len(y_data), 1)
 
@@ -101,31 +101,65 @@ class IO:
                   raise ValueError(f"Length of x_data and y_data do not match for {x_path} and {y_path}")
 
               # Create conditioning array
-              c_array = np.array(c_data, dtype=np.float32)
-              c_array = np.tile(c_array, (len(x_data), 1))
+              all_c_data = []
+              for ci in c_data:
+                ci_array = np.full((len(x_data), 1), [ci/100])
+                ci_array = ci_array.reshape(len(x_data), 1)
+                all_c_data.append(ci_array)
 
               if split > 1:
-                  # Split data into chunks
+                  # # Split data into chunks
                   num_samples = (len(x_data) // split) * split
                   x_splits = np.split(x_data[:num_samples], split)
                   y_splits = np.split(y_data[:num_samples], split)
-                  c_splits = np.split(c_array[:num_samples], split)
-
-                  c_batch.extend(c_splits)
                   x_batch.extend(x_splits)
                   y_batch.extend(y_splits)
               else:
-                  c_batch.append(c_array)
+                  for idx, cb in enumerate(conditions_batch):
+                      c_data = all_c_data[idx]
+                      conditions_batch[idx] = np.vstack((cb, c_data))
+                      
+                  # conditions_batch.append(all_c_batches)
                   x_batch.append(x_data)
                   y_batch.append(y_data)
-          
-          # Convert lists to NumPy arrays
-          c_batch = np.concatenate(c_batch, axis=0)
-          x_batch = np.concatenate(x_batch, axis=0)
-          y_batch = np.concatenate(y_batch, axis=0)
-
           # Split into training and testing
           split_idx = int(len(x_batch) * (1 - test_size))
-          train_data = (c_batch[:split_idx], x_batch[:split_idx], y_batch[:split_idx])
-          test_data = (c_batch[split_idx:], x_batch[split_idx:], y_batch[split_idx:])
+          
+          
+          x_batch = np.concatenate(x_batch, axis=0)
+          y_batch = np.concatenate(y_batch, axis=0)
+          # Convert lists to NumPy arrays
+          c_train = []
+          c_test = []
+          # print ("x shape, len", x_batch.shape, len(x_batch))
+          print(len(conditions_batch))
+          # print ("c shape, len", conditions_batch[0].shape, len(conditions_batch[0]))
+          for ci in conditions_batch:
+              ci_train = ci[:split_idx]
+              ci_test = ci[split_idx:]
+              # print ("cinp shape, len", ci_train.shape, len(ci_train))
+              c_train.append(ci_train)
+              c_test.append(ci_test)
+          
+          # print("train len", len(c_train))
+          # print("train[0] len", len(c_train[0]))
+          # print(c_train[0])
+          # print("x train len", len(x_batch[:split_idx]))
+          # print((x_batch[:split_idx]))
+          print("###### WILL RETURN TRAINABLE")
+          print("x shape", x_batch[:split_idx].shape)
+          print("x val", c_train)
+          # print("x val", x_batch[:split_idx])
+
+          # Valid like
+          # x shape [[-7.0305156e-05]
+          #  [-6.6047105e-05]
+          #  [-6.2451421e-05]
+          #  ...
+          #  [ 5.2911364e-03]
+          #  [ 5.0643734e-03]
+          #  [ 4.7116312e-03]]
+          # Processing batch 1...
+          train_data = (c_train, x_batch[:split_idx], y_batch[:split_idx])
+          test_data = (c_test, x_batch[split_idx:], y_batch[split_idx:])
           yield train_data, test_data
