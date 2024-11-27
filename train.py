@@ -11,7 +11,7 @@ from keras._tf_keras.keras.layers import LSTM, Conv1D, Dense, Input, Concatenate
 from keras._tf_keras.keras.optimizers import Adam
 from keras._tf_keras.keras.backend import clear_session
 from keras._tf_keras.keras.models import Model
-from keras._tf_keras.keras.layers import TimeDistributed
+from keras._tf_keras.keras.losses import MeanSquaredError
 import json
 
 from compare import Compare
@@ -21,12 +21,12 @@ def main(
     training_mode:Literal['fast', 'accurate', 'extended'] = 'fast',
     split_data:int = 1,
     batch_size:int = 4096,
-    input_size:int = 300,
-    max_epochs:int = 2,
+    input_size:int = 200,
+    max_epochs:int = 3,
 ):
 
     timestamp = datetime.datetime.now().strftime("%H%M%S").lower()
-    name="multi silver all "
+    name="Asato 3x "
     out_dir = f'{timestamp}'
     os.makedirs(f'models/{out_dir}')
     print(f"Current output directory: {out_dir}")
@@ -82,7 +82,7 @@ def main(
         learning_rate = 0.01
         conv1d_strides = 3
         conv1d_filters = 32
-        hidden_units = 128
+        hidden_units = 64
         kernel_size = 12
     
     config_summary = {
@@ -122,7 +122,7 @@ def main(
     output = Dense(1, activation=None)(x)
     control_layers = {control_name: control_inputs[control_name] for control_name in control_names}
     model = Model(inputs={'audio_input': audio_input, **control_layers}, outputs=output)
-    model.compile(optimizer=Adam(learning_rate=learning_rate), loss=Data.dual_loss, metrics=[Data.dual_loss])
+    model.compile(optimizer=Adam(learning_rate=learning_rate), loss=MeanSquaredError(), metrics=[MeanSquaredError()])
 
     # print('\n') ;model.summary(); print('\n')
 
@@ -207,14 +207,12 @@ def main(
     # =========================================================================
     # PREDICT AND SAVE
     # =========================================================================
-    model_save_path = f'models/{out_dir}/model.h5'
-    model_architecture = json.loads(model.to_json())
+    model_save_path = f'models/{out_dir}/model.keras'
     final_summary = {
       **config_summary,
       "data_preprocessing": "normalized",
       "training_time": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
       "history": history.history,
-      "model_architecture": model_architecture
     }
 
     # Ovbrwrite the config file with additional information
@@ -222,9 +220,9 @@ def main(
       json.dump(final_summary, f, indent=2)
     print(f'Params saved for training mode "{training_mode}"')
 
-    sys.stderr = open(os.devnull, "w")  # silence stderr
+    # sys.stderr = open(os.devnull, "w")  # silence stderr
     model.save(model_save_path)
-    sys.stderr = sys.__stderr__  # unsilence stderr
+    # sys.stderr = sys.__stderr__  # unsilence stderr
     print(f"Training complete. Model saved to: {model_save_path}")
 
     # Run Prediction #################################################
